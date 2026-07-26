@@ -1,0 +1,7 @@
+{
+  "name": "TimemoreBLE",
+  "version": "0.1.0",
+  "description": "Local duplicated TimemoreBLE library for APP project.",
+  "frameworks": "arduino",
+  "platforms": "espressif32"
+}
