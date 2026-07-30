@@ -6,14 +6,51 @@ TimemoreScaleManager scaleManager;
 Preferences prefs;
 
 float currentWeight = 0.0f;
+float currentFlowRate = 0.0f;
 uint8_t currentBattery = 0;
 bool timerRunning = false;
 uint32_t timerStartMs = 0;
 uint32_t timerAccumulatedMs = 0;
 uint32_t lastTimerPrintMs = 0;
 uint32_t lastBatteryRequestMs = 0;
+float lastFlowSampleWeight = 0.0f;
+uint32_t lastFlowSampleMs = 0;
+bool hasFlowSample = false;
 
 String commandBuffer;
+
+void resetFlowRate() {
+  currentFlowRate = 0.0f;
+  lastFlowSampleWeight = currentWeight;
+  lastFlowSampleMs = millis();
+  hasFlowSample = false;
+}
+
+void updateFlowRate(float newWeight) {
+  const uint32_t now = millis();
+  if (!hasFlowSample) {
+    lastFlowSampleWeight = newWeight;
+    lastFlowSampleMs = now;
+    hasFlowSample = true;
+    currentFlowRate = 0.0f;
+    return;
+  }
+
+  const uint32_t deltaMs = now - lastFlowSampleMs;
+  if (deltaMs < 250) {
+    return;
+  }
+
+  const float deltaWeight = newWeight - lastFlowSampleWeight;
+  float flowRate = (deltaWeight * 1000.0f) / static_cast<float>(deltaMs);
+  if (flowRate > -0.05f && flowRate < 0.05f) {
+    flowRate = 0.0f;
+  }
+
+  currentFlowRate = flowRate;
+  lastFlowSampleWeight = newWeight;
+  lastFlowSampleMs = now;
+}
 
 void attachScaleCallbacks(TimemoreScale* scale) {
   if (!scale) {
@@ -22,6 +59,7 @@ void attachScaleCallbacks(TimemoreScale* scale) {
 
   scale->onWeight([](float w, float /*w2*/) {
     currentWeight = w;
+    updateFlowRate(w);
   });
 
   scale->onBattery([](uint8_t p) {
@@ -50,6 +88,7 @@ uint32_t timerElapsedMs() {
 void printStatus() {
   Serial.printf("Connected: %s\n", scaleManager.isConnected() ? "YES" : "NO");
   Serial.printf("Weight: %.1f g\n", currentWeight);
+  Serial.printf("Flow: %.2f g/s\n", currentFlowRate);
   Serial.printf("Battery: %u%%\n", currentBattery);
 
   const uint32_t elapsed = timerElapsedMs();
@@ -75,6 +114,7 @@ void handleCommand(const String& input) {
     }
 
     scaleManager.scale()->tare();
+    resetFlowRate();
     Serial.println("TARE command sent");
     return;
   }
@@ -171,6 +211,8 @@ void setup() {
   scaleManager.onConnectionChange([](bool connected) {
     Serial.printf("Scale %s\n", connected ? "connected" : "disconnected");
 
+    resetFlowRate();
+
     if (connected && scaleManager.scale()) {
       attachScaleCallbacks(scaleManager.scale());
       currentBattery = scaleManager.scale()->getBatteryLevel();
@@ -204,6 +246,7 @@ void setup() {
   if (scaleManager.scale()) {
     attachScaleCallbacks(scaleManager.scale());
     currentBattery = scaleManager.scale()->getBatteryLevel();
+    resetFlowRate();
   }
 
   printHelp();
@@ -233,8 +276,9 @@ void loop() {
     const uint32_t mm = sec / 60;
     const uint32_t ss = sec % 60;
 
-    Serial.printf("W: %.1f g | B: %u%% | T: %02lu:%02lu%s\n",
+    Serial.printf("W: %.1f g | F: %.2f g/s | B: %u%% | T: %02lu:%02lu%s\n",
                   currentWeight,
+            currentFlowRate,
                   currentBattery,
                   mm,
                   ss,
